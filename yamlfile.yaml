@@ -1,0 +1,100 @@
+---
+### =========================================================================
+### RESOURCE 1: THE REGISTRY AUTHENTICATION SECRET
+### (Solves LO4 - Task 2: Pulling from authenticated DockerHub)
+### =========================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dockerhub-pull-secret
+  namespace: default
+# This specific 'type' tells K8s: "Parse the data below as a Docker config file"
+type: kubernetes.io/dockerconfigjson
+data:
+  # In a real exam, you generate this Base64 string via the terminal using:
+  # kubectl create secret docker-registry ... --dry-run=client -o yaml
+  .dockerconfigjson: ewoJImF1dGhzIjogewoJCSJodHRwczovL2luZGV4LmRvY2tlci5pby92MS8iOiB7CgkJCSJhdXRoIjogImRHOWphMlZ5Ym1GdFpUcHdZWE56ZDI5eVpBPT0iCgkJfQoJfQp9
+
+
+---
+### =========================================================================
+### RESOURCE 2: THE MASTER DEPLOYMENT SPECIFICATION
+### (Covers LO4 - Tasks 1, 3, 4, 5, 6, 7, 8, 9, and 10)
+### =========================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: exam-web-workload
+  namespace: default
+  labels:
+    tier: frontend-app
+  annotations:
+    # TASK 5: Stamping this exact string here populates the 'CHANGE-CAUSE' 
+    # column when you type `kubectl rollout history deployment/exam-web-workload`
+    kubernetes.io/change-cause: "Rev 1.27-A: Updated memory limits and passed readiness gate"
+
+spec:
+  # TASK 1 & 3: The desired state. The controller will fight to keep 5 alive.
+  replicas: 5
+
+  # TASK 9: The Garbage Collector. Tells etcd to keep the live ReplicaSet, 
+  # plus the 3 most recently killed historic ReplicaSets for rollback purposes.
+  revisionHistoryLimit: 3
+
+  # TASK 6 & 7: THE ROLLOUT CHOREOGRAPHY 
+  # (If an exam asks for a breaking DB migration, comment out 'RollingUpdate' and turn on 'Recreate')
+  strategy:
+    type: RollingUpdate
+    # type: Recreate 
+    rollingUpdate:
+      maxSurge: 1        # Can spin up 1 temporary extra pod during an upgrade (Total running: 6)
+      maxUnavailable: 0  # Zero pods can be destroyed until the surge pod is 100% Ready (100% Uptime)
+
+  # The "Targeting Laser": Tells this Deployment which loose Pods belong to it.
+  selector:
+    matchLabels:
+      app: nginx-server
+
+  # -----------------------------------------------------------------------
+  # THE POD TEMPLATE (Everything below this line is the actual "Container")
+  # -----------------------------------------------------------------------
+  template:
+    metadata:
+      labels:
+        # MUST match the selector.matchLabels above, or the YAML will reject.
+        app: nginx-server 
+    spec:
+      # TASK 2 (Implementation): Tells the Kubelet to grab the Secret from Document 1
+      imagePullSecrets:
+        - name: dockerhub-pull-secret
+
+      containers:
+        - name: web-daemon
+          # TASK 4 & 10: The payload. If you change this to "nginx:999-broken", 
+          # Kubelet triggers ImagePullBackOff, halts the rollout, and keeps old pods alive.
+          image: docker.io/library/nginx:1.27
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http-traffic
+              containerPort: 80
+              protocol: TCP
+
+          # TASK 8: THE HARDWARE BOUNDARIES
+          resources:
+            requests:
+              cpu: "100m"      # "Millicores". The pod demands 1/10th of a CPU thread to turn on.
+              memory: "128Mi"  # The pod demands 128 Megabytes of RAM allocated to it.
+            limits:
+              cpu: "500m"      # If the app goes crazy, throttle its clock speed at 1/2 a CPU thread.
+              memory: "256Mi"  # If the app tries to use 257MB of RAM, instantly execute an OOMKill.
+
+          # THE READINESS GATE (The silent hero of Task 10)
+          # If this test fails, the Pod is marked "Not Ready", its IP is ripped out of the 
+          # Service load balancer, and the Deployment rollout is frozen in place.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 5
