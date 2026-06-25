@@ -1,0 +1,95 @@
+Use this as your exam-ready guide.
+1. podman-compose.yml
+
+version: "3.8"
+
+services:
+  mariadb:
+    image: docker.io/library/mariadb:latest
+    container_name: nextcloud_mariadb
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: exam-root-pw
+      MARIADB_DATABASE: nextcloud
+      MARIADB_USER: nc_user
+      MARIADB_PASSWORD: nc_password
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - nextcloud_net
+
+  nextcloud:
+    image: docker.io/library/nextcloud:latest
+    container_name: nextcloud_app
+    restart: always
+    ports:
+      - "8088:80"
+    volumes:
+      - nextcloud_data:/var/www/html
+    depends_on:
+      - mariadb
+    networks:
+      - nextcloud_net
+
+volumes:
+  mariadb_data:
+  nextcloud_data:
+
+networks:
+  nextcloud_net:
+    driver: bridge
+
+Start it:
+
+podman-compose up -d
+
+Open in browser:
+
+http://localhost:8088
+
+On the Nextcloud setup page enter:
+
+Database user: nc_user
+Database password: nc_password
+Database name: nextcloud
+Database host: mariadb
+
+Take screenshot of the setup page.
+2. Volume persistence demonstration
+Create named volume manually if required:
+
+podman volume create nextcloud_data
+
+Write a test file inside the Nextcloud data directory:
+
+podman exec -it nextcloud_app bash
+echo "Persistent test file" > /var/www/html/persistence-test.txt
+exit
+
+Verify file exists:
+
+podman exec nextcloud_app cat /var/www/html/persistence-test.txt
+
+Stop and remove the container:
+
+podman stop nextcloud_app
+podman rm nextcloud_app
+
+Start a new Nextcloud container using the same volume:
+
+podman run -d \
+  --name nextcloud_app_new \
+  --network nextcloud_net \
+  -p 8088:80 \
+  -v nextcloud_data:/var/www/html \
+  docker.io/library/nextcloud:latest
+
+Check that the file still exists:
+
+podman exec nextcloud_app_new cat /var/www/html/persistence-test.txt
+
+Expected output:
+
+Persistent test file
+
+That proves the named volume persisted after container removal.
